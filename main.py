@@ -2,10 +2,10 @@ import os.path
 
 import requests
 import lhafile
-import io
 import re
 import csv
 import pandas as pd
+import calendar
 
 # http://www1.mbrace.or.jp/od2/K/YYYYMM/kYYMMDD.lzh
 # http://www1.mbrace.or.jp/od2/B/YYYYMM/bYYMMDD.lzh
@@ -23,12 +23,17 @@ TEMPLATE_URL = "http://www1.mbrace.or.jp/od2/{4}/{0}{2}/{5}{1}{2}{3}.lzh"
 #       会場や風、波は一旦考慮しない
 #       回帰などを行う際に、レースタイムなどを使いたいが、一旦考慮しない
 
-#       先頭にレースIDを追加することとする。ex) ＢＴＳ松浦開設記念
+#       先頭にレースIDを追加することとする。ex) ＢＴＳ松浦開設記念1
 #       中止になったりするため、レースIDと選手登番をキーとして結果と結合する
+
+#       かなり強引だが、HEADERとしてHEADER_PATTERNを探し、その２行下の文字列をレース名とする
 
 PLAYER_ID_HEADER = "選手登番"
 RACE_HEADER = "レースID"
-RACE_PATTERN = r"\s{10,10}([^\s]+)\s{3}"
+
+HEADER_PATTERN = r"^\s{28}＊＊＊　競走成績　＊＊＊|^\s{28}＊＊＊　番組表　＊＊＊"
+
+RACE_PATTERN = r"\s{10,10}([^\s]+)"
 
 SCHEDULE_HEADER = [RACE_HEADER, "艇番", PLAYER_ID_HEADER, "名前", "年齢", "支部", "体重", "階級", "全国勝率", "全国2率", "当地勝率", "当地2率",
                    "モーター2率", "ボート2率"]
@@ -37,8 +42,7 @@ SCHEDULE_PATTERN = r"^([1-6])\s(\d{4})(\D+)(\d{2})(\D+)(\d{2})([AB][12])\s+(\d+.
 RESULT_HEADER = [RACE_HEADER, "順位", PLAYER_ID_HEADER, "展示"]
 RESULT_PATTERN = r"\s+0(\d)\s+\d\s+(\d{4})\s+\D+\s\d+\s+\d+\s+(\d+.\d{2})"
 
-
-RESULT_DIR = "result"
+SAVE_DIR = "result"
 
 class DownloadType:
     """URLに渡される識別文字"""
@@ -65,30 +69,22 @@ def download(date: str, download_type: str, delimiter: str = '-', decompress: bo
     lzh_filename = f"{download_type}{date}.lzh"
 
     if check_existence and os.path.exists(lzh_filename):
-        print(f"{lzh_filename} すでにダウンロード済みです。強制的に取得したい場合は、check_existenceをFalseにしてください")
-        if decompress:
-            f = lhafile.Lhafile(lzh_filename)
-            exists = [os.path.exists(filename) for filename in f.namelist()]
-            # 存在チェック
-            if all(exists):
-                return f.namelist()
+        print(f"{lzh_filename} すでにダウンロード済みです")
 
-        else:
-            return lzh_filename
+    else:
+        year, month, day = date.split(delimiter)
+        url: str = TEMPLATE_URL.format(year, year[2:], month, day, download_type, download_type.lower())
+        print(f"{url} を取得しています")
+        res: requests.Response = requests.get(url)
 
-    year, month, day = date.split(delimiter)
-    url: str = TEMPLATE_URL.format(year, year[2:], month, day, download_type, download_type.lower())
-    print(f"{url} を取得しています")
-    res: requests.Response = requests.get(url)
+        # とりあえず保存しておく。何度もアクセスすると迷惑がかかる
+        with open(lzh_filename, "wb") as f:
+            f.write(res.content)
 
-    # とりあえず保存しておく。何度もアクセスすると迷惑がかかる
-    with open(lzh_filename, "wb") as f:
-        f.write(res.content)
-
-    print(f"{lzh_filename} を保存しました")
+        print(f"{lzh_filename} を保存しました")
 
     if decompress:
-        f = lhafile.Lhafile(io.BytesIO(res.content))
+        f = lhafile.Lhafile(lzh_filename)
 
         for info in f.infolist():
             filename = info.filename
@@ -114,6 +110,7 @@ def parse(file, pattern_string: str, header: list = None, save_as_csv: bool = Tr
     """
     save_as_csv: Falseならプレビューだけする
     """
+    header_pattern = re.compile(HEADER_PATTERN)
     race_pattern = re.compile(RACE_PATTERN)
     pattern = re.compile(pattern_string)
 
@@ -124,7 +121,12 @@ def parse(file, pattern_string: str, header: list = None, save_as_csv: bool = Tr
     # 重い while + if + append でやや遅い
     with open(file, "r", encoding="cp932") as f:
         while line := f.readline():
-            if ret := re.match(race_pattern, line):
+            if re.match(header_pattern, line):
+
+                for _ in range(2):
+                    line = f.readline()
+
+                ret = re.match(race_pattern, line)
                 race_name = ret.groups()[0]
                 race_num = 0
 
@@ -181,8 +183,8 @@ def merge(left_file, right_file, filename: str, on=None) -> str:
     return filename
 
 
-def make_boat_race_csv(date: str, filename: str = None, only_result: bool = True):
-    os.makedirs(RESULT_DIR, exist_ok=True)
+def make_boatrace_csv(date: str, filename: str = None, only_result: bool = True):
+    os.makedirs(SAVE_DIR, exist_ok=True)
 
     r_files: list[str] = download_result(date, decompress=True)
     s_files: list[str] = download_schedule(date, decompress=True)
@@ -191,12 +193,19 @@ def make_boat_race_csv(date: str, filename: str = None, only_result: bool = True
     s_csv_files = [parse_schedule(file) for file in s_files]
 
     for r_file, s_file in zip(r_csv_files, s_csv_files):
-        merge(r_file, s_file, filename=filename if filename else os.path.join(RESULT_DIR, f"{date}.csv"))
+        merge(r_file, s_file, filename=filename if filename else os.path.join(SAVE_DIR, f"{date}.csv"))
 
     if only_result:
         for file in r_files + s_files + r_csv_files + s_csv_files:
             os.remove(file)
 
 
+def make_month_boatrace_csv(year:int, month:int):
+    days:int = calendar.monthrange(year, month)[1]
+    for day in range(1, days + 1):
+        date:str = f"{year}-{month:02}-{day:02}"
+        make_boatrace_csv(date)
+
 if __name__ == '__main__':
-    make_boat_race_csv("2020-09-29")
+    # make_boatrace_csv("2020-09-06")
+    make_month_boatrace_csv(2020, 9)
