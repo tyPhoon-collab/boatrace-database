@@ -1,0 +1,202 @@
+import os.path
+
+import requests
+import lhafile
+import io
+import re
+import csv
+import pandas as pd
+
+# http://www1.mbrace.or.jp/od2/K/YYYYMM/kYYMMDD.lzh
+# http://www1.mbrace.or.jp/od2/B/YYYYMM/bYYMMDD.lzh
+
+# ダウンロードする際に使用する公式サイトのURL。取得間隔には注意
+TEMPLATE_URL = "http://www1.mbrace.or.jp/od2/{4}/{0}{2}/{5}{1}{2}{3}.lzh"
+
+# サブグループとして設定し、groupsにより、要素をタプルで取得予定
+# カッコ内部に一致したものを取得できる
+# ex) 1 4041小林基樹41山口55B1 4.40 22.79 5.04 30.43 44 30.77 55 15.69 6 56
+# 補足:  {m} -> m字以上
+#       体重は必ず2桁
+#       少数の有効数字は２桁
+#       選手登番をキーとして結合できるようにする
+#       会場や風、波は一旦考慮しない
+#       回帰などを行う際に、レースタイムなどを使いたいが、一旦考慮しない
+
+#       先頭にレースIDを追加することとする。ex) ＢＴＳ松浦開設記念
+#       中止になったりするため、レースIDと選手登番をキーとして結果と結合する
+
+PLAYER_ID_HEADER = "選手登番"
+RACE_HEADER = "レースID"
+RACE_PATTERN = r"\s{10,10}([^\s]+)\s{3}"
+
+SCHEDULE_HEADER = [RACE_HEADER, "艇番", PLAYER_ID_HEADER, "名前", "年齢", "支部", "体重", "階級", "全国勝率", "全国2率", "当地勝率", "当地2率",
+                   "モーター2率", "ボート2率"]
+SCHEDULE_PATTERN = r"^([1-6])\s(\d{4})(\D+)(\d{2})(\D+)(\d{2})([AB][12])\s+(\d+.\d{2})\s+(\d+.\d{2})\s+(\d+.\d{2})\s+(\d+.\d{2})\s+\d+\s+(\d+.\d{2})\s+\d+\s+(\d+.\d{2})"
+
+RESULT_HEADER = [RACE_HEADER, "順位", PLAYER_ID_HEADER, "展示"]
+RESULT_PATTERN = r"\s+0(\d)\s+\d\s+(\d{4})\s+\D+\s\d+\s+\d+\s+(\d+.\d{2})"
+
+
+RESULT_DIR = "result"
+
+class DownloadType:
+    """URLに渡される識別文字"""
+    RESULT = "K"
+    SCHEDULE = "B"
+
+
+def download_result(date: str, **kwargs):
+    return download(date, DownloadType.RESULT, **kwargs)
+
+
+def download_schedule(date: str, **kwargs):
+    return download(date, DownloadType.SCHEDULE, **kwargs)
+
+
+def download(date: str, download_type: str, delimiter: str = '-', decompress: bool = False,
+             check_existence: bool = True) -> str or list[str]:
+    """
+        文字列 YYYY-MM-DD を引数にとることとする
+        Windows-31jで保存される
+        check_existence: ファイルが存在していたら取得しない
+    """
+
+    lzh_filename = f"{download_type}{date}.lzh"
+
+    if check_existence and os.path.exists(lzh_filename):
+        print(f"{lzh_filename} すでにダウンロード済みです。強制的に取得したい場合は、check_existenceをFalseにしてください")
+        if decompress:
+            f = lhafile.Lhafile(lzh_filename)
+            exists = [os.path.exists(filename) for filename in f.namelist()]
+            # 存在チェック
+            if all(exists):
+                return f.namelist()
+
+        else:
+            return lzh_filename
+
+    year, month, day = date.split(delimiter)
+    url: str = TEMPLATE_URL.format(year, year[2:], month, day, download_type, download_type.lower())
+    print(f"{url} を取得しています")
+    res: requests.Response = requests.get(url)
+
+    # とりあえず保存しておく。何度もアクセスすると迷惑がかかる
+    with open(lzh_filename, "wb") as f:
+        f.write(res.content)
+
+    print(f"{lzh_filename} を保存しました")
+
+    if decompress:
+        f = lhafile.Lhafile(io.BytesIO(res.content))
+
+        for info in f.infolist():
+            filename = info.filename
+            with open(filename, "wb") as tf:
+                tf.write(f.read(info.filename))
+
+            print(f"{filename} を保存しました")
+
+        return f.namelist()
+    else:
+        return lzh_filename
+
+
+def parse_result(file, **kwargs):
+    return parse(file, RESULT_PATTERN, header=RESULT_HEADER, **kwargs)
+
+
+def parse_schedule(file, **kwargs):
+    return parse(file, SCHEDULE_PATTERN, header=SCHEDULE_HEADER, **kwargs)
+
+
+def parse(file, pattern_string: str, header: list = None, save_as_csv: bool = True) -> str or None:
+    """
+    save_as_csv: Falseならプレビューだけする
+    """
+    race_pattern = re.compile(RACE_PATTERN)
+    pattern = re.compile(pattern_string)
+
+    rows: list[list] = []
+    race_name = None
+    race_num = 0
+
+    # 重い while + if + append でやや遅い
+    with open(file, "r", encoding="cp932") as f:
+        while line := f.readline():
+            if ret := re.match(race_pattern, line):
+                race_name = ret.groups()[0]
+                race_num = 0
+
+            if re.search(r"H1800m|Ｈ１８００ｍ", line):
+                # レースのラウンドを更新。
+                race_num += 1
+
+            if ret := re.match(pattern, line):
+                # 全角スペースを置換するかどうか
+                # line = line.replace("\u3000", "")
+                row = list(ret.groups())
+
+                # レースIDを先頭に追加
+                race_id: str = race_name + str(race_num)
+                row.insert(0, race_id)
+
+                rows.append(row)
+
+    if save_as_csv:
+        # フォーマットに従っていれば、以下で正常にファイル名が指定される
+        filename: str = file.replace(".TXT", ".CSV")
+        print(f"{filename} を保存しました")
+        return write_csv(filename, rows, header)
+    else:
+        for row in rows:
+            print(row)
+
+
+def write_csv(filename: str, rows: list[list], header: list) -> str:
+    # 従っていない場合は以下で対応
+    if not filename.upper().endswith(".CSV"):
+        filename += ".csv"
+
+    # 2次元データをwriterowsによって書き込み、CSVとする
+    with open(filename, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        if header:
+            writer.writerow(header)
+        writer.writerows(rows)
+
+    return filename
+
+
+def merge(left_file, right_file, filename: str, on=None) -> str:
+    # pdでmergeする。
+    if on is None:
+        on = [PLAYER_ID_HEADER, RACE_HEADER]
+
+    left = pd.read_csv(left_file)
+    right = pd.read_csv(right_file)
+    pd.merge(left, right, on=on).to_csv(filename)
+    print(f"{filename} マージしました")
+
+    return filename
+
+
+def make_boat_race_csv(date: str, filename: str = None, only_result: bool = True):
+    os.makedirs(RESULT_DIR, exist_ok=True)
+
+    r_files: list[str] = download_result(date, decompress=True)
+    s_files: list[str] = download_schedule(date, decompress=True)
+
+    r_csv_files = [parse_result(file) for file in r_files]
+    s_csv_files = [parse_schedule(file) for file in s_files]
+
+    for r_file, s_file in zip(r_csv_files, s_csv_files):
+        merge(r_file, s_file, filename=filename if filename else os.path.join(RESULT_DIR, f"{date}.csv"))
+
+    if only_result:
+        for file in r_files + s_files + r_csv_files + s_csv_files:
+            os.remove(file)
+
+
+if __name__ == '__main__':
+    make_boat_race_csv("2020-09-29")
