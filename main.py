@@ -1,4 +1,5 @@
 import os.path
+from time import sleep
 
 import requests
 import lhafile
@@ -12,6 +13,8 @@ import calendar
 
 # ダウンロードする際に使用する公式サイトのURL。取得間隔には注意
 TEMPLATE_URL = "http://www1.mbrace.or.jp/od2/{4}/{0}{2}/{5}{1}{2}{3}.lzh"
+
+INTERVAL = 3
 
 # サブグループとして設定し、groupsにより、要素をタプルで取得予定
 # カッコ内部に一致したものを取得できる
@@ -76,6 +79,10 @@ def download(date: str, download_type: str, delimiter: str = '-', decompress: bo
         url: str = TEMPLATE_URL.format(year, year[2:], month, day, download_type, download_type.lower())
         print(f"{url} を取得しています")
         res: requests.Response = requests.get(url)
+
+        # インターバルを置く
+        print(f"{INTERVAL}秒スリープしています")
+        sleep(INTERVAL)
 
         # とりあえず保存しておく。何度もアクセスすると迷惑がかかる
         with open(lzh_filename, "wb") as f:
@@ -207,5 +214,5 @@ def make_month_boatrace_csv(year:int, month:int):
         make_boatrace_csv(date)
 
 if __name__ == '__main__':
-    # make_boatrace_csv("2020-09-06")
-    make_month_boatrace_csv(2020, 9)
+    make_boatrace_csv("2020-09-06")
+    # make_month_boatrace_csv(2020, 9)
