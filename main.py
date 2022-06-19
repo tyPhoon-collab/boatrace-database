@@ -214,5 +214,5 @@ def make_month_boatrace_csv(year:int, month:int):
         make_boatrace_csv(date)
 
 if __name__ == '__main__':
-    make_boatrace_csv("2020-09-06")
-    # make_month_boatrace_csv(2020, 9)
+    # make_boatrace_csv("2020-09-06")
+    make_month_boatrace_csv(2020, 8)
