@@ -30,7 +30,10 @@ REQUEST_INTERVAL = 3
 
 #       かなり強引だが、HEADERとしてHEADER_PATTERNを探し、その２行下の文字列をレース名とする
 
-#       オッズの取得もかなり強引。もとの形式がTXTで複雑。
+#       オッズの取得もかなり強引。もとの形式がTXTで複雑。不成立、特払い、複勝なし、などの場合もある
+#       取得できなかったら-1とする
+
+#       同率を考慮していない
 
 PLAYER_ID = "選手登番"
 RACE_ID = "レースID"
@@ -45,12 +48,17 @@ RESULT_HEADER = [RACE_ID, "順位", PLAYER_ID, "展示"]
 RESULT_PATTERN = re.compile(r"\s+0(\d)\s+\d\s+(\d{4})\s+\D+\s\d+\s+\d+\s+(\d+.\d{2})")
 
 ODDS_HEADER = [RACE_ID, "単勝", "複勝1", "複勝2", "2連単", "2連複", "拡連複12", "拡連複13", "拡連複23", "3連単", "3連複"]
-ODDS_PATTERN = re.compile(
-    r"\s+単勝\s+\d\s+(\d+)\s+複勝\s+\d\s+(\d+)\s+\d\s+(\d+)" \
-    r"\s+２連単\s+\d-\d\s+(\d+)\s+人気\s+\d+\s+２連複\s+\d-\d\s+(\d+)\s+人気\s+\d+" \
-    r"\s+拡連複\s+\d-\d\s+(\d+)\s+人気\s+\d+\s+\d-\d\s+(\d+)\s+人気\s+\d+" \
-    r"\s+\d-\d\s+(\d+)\s+人気\s+\d+\s+３連単\s+\d-\d-\d\s+(\d+)\s+人気\s+\d+" \
-    r"\s+３連複\s+\d-\d-\d\s+(\d+)\s+人気\s+\d+"
+ODDS_PATTERNS = (
+    re.compile(r"\s+単勝\s+\d\s+(\d+)"), 
+    re.compile(r"\s+複勝\s+\d\s+(\d+)"),
+    re.compile(r"\s+複勝\s+\d\s+\d+\s+\d\s+(\d+)"),
+    re.compile(r"\s+２連単\s+\d-\d\s+(\d+)"),
+    re.compile(r"\s+２連複\s+\d-\d\s+(\d+)"),
+    re.compile(r"\s+拡連複\s+\d-\d\s+(\d+)"),
+    re.compile(r"\s+\d-\d\s+(\d+)"),
+    re.compile(r"\s+\d-\d\s+(\d+)"),
+    re.compile(r"\s+３連単\s+\d-\d-\d\s+(\d+)"),
+    re.compile(r"\s+３連複\s+\d-\d-\d\s+(\d+)\s+人気\s+\d+")
 )
 
 class Directory:
@@ -151,21 +159,31 @@ def parse(file, pattern: re.Pattern, header: list = None, save_as_csv: bool = Tr
                 race_num += 1
                 
             if ret := re.match(pattern, line):
+                race_id: str = race_name + str(race_num)
+                row = []
+                
                 if odds:
-                    lines = line
-                    for _ in range(8):
-                        lines += f.readline()
-
-                    ret = re.match(ODDS_PATTERN, lines)
-
-                # 全角スペースを置換するかどうか
-                # line = line.replace("\u3000", "")
-                row = list(ret.groups())
+                    for kind, _pattern in zip(ODDS_HEADER[1:], ODDS_PATTERNS):
+                        ret = re.match(_pattern, line)
+                        
+                        if ret:
+                            row.append(ret.groups()[0])
+                        else:            
+                            print(race_id, kind, "オッズの検知に失敗")
+                            row.append(-1)
+    
+                        # 基本的には１行に１つの情報が取得できるが、複勝だけは横並び。
+                        # 処理の都合上、少し強引だが、以下のようにする                    
+                        if kind != "複勝1":
+                            line = f.readline()
+                        
+                else:
+                    # 全角スペースを置換するかどうか
+                    # line = line.replace("\u3000", "")
+                    row = list(ret.groups())
 
                 # レースIDを先頭に追加
-                race_id: str = race_name + str(race_num)
                 row.insert(0, race_id)
-
                 rows.append(row)
 
     if save_as_csv:
@@ -236,14 +254,14 @@ def make_boatrace_csv(date: str, filename: str = None, with_odds: bool = True, o
             os.remove(file)
 
 
-def make_month_boatrace_csv(year:int, month:int):
+def make_month_boatrace_csv(year:int, month:int, **kwargs):
     days:int = calendar.monthrange(year, month)[1]
     for day in range(1, days + 1):
         date:str = f"{year}-{month:02}-{day:02}"
-        make_boatrace_csv(date)
+        make_boatrace_csv(date, **kwargs)
 
 if __name__ == '__main__':
-    # make_boatrace_csv("2020-09-06")
+    # make_boatrace_csv("2020-09-15", only_result=False)
     # parse_odds("K200906.TXT")
     make_month_boatrace_csv(2020, 9)
     
