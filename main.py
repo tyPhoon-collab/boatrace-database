@@ -13,8 +13,7 @@ import calendar
 
 # ダウンロードする際に使用する公式サイトのURL。取得間隔には注意
 TEMPLATE_URL = "http://www1.mbrace.or.jp/od2/{4}/{0}{2}/{5}{1}{2}{3}.lzh"
-
-INTERVAL = 3
+REQUEST_INTERVAL = 3
 
 # サブグループとして設定し、groupsにより、要素をタプルで取得予定
 # カッコ内部に一致したものを取得できる
@@ -31,21 +30,32 @@ INTERVAL = 3
 
 #       かなり強引だが、HEADERとしてHEADER_PATTERNを探し、その２行下の文字列をレース名とする
 
-PLAYER_ID_HEADER = "選手登番"
-RACE_HEADER = "レースID"
+#       オッズの取得もかなり強引。もとの形式がTXTで複雑。
 
-HEADER_PATTERN = r"^\s{28}＊＊＊　競走成績　＊＊＊|^\s{28}＊＊＊　番組表　＊＊＊"
+PLAYER_ID = "選手登番"
+RACE_ID = "レースID"
 
-RACE_PATTERN = r"\s{10,10}([^\s]+)"
+HEADER_PATTERN = re.compile(r"^\s{28}＊＊＊　競走成績　＊＊＊|^\s{28}＊＊＊　番組表　＊＊＊")
+RACE_PATTERN = re.compile(r"\s{10,10}([^\s]+)")
 
-SCHEDULE_HEADER = [RACE_HEADER, "艇番", PLAYER_ID_HEADER, "名前", "年齢", "支部", "体重", "階級", "全国勝率", "全国2率", "当地勝率", "当地2率",
-                   "モーター2率", "ボート2率"]
-SCHEDULE_PATTERN = r"^([1-6])\s(\d{4})(\D+)(\d{2})(\D+)(\d{2})([AB][12])\s+(\d+.\d{2})\s+(\d+.\d{2})\s+(\d+.\d{2})\s+(\d+.\d{2})\s+\d+\s+(\d+.\d{2})\s+\d+\s+(\d+.\d{2})"
+SCHEDULE_HEADER = [RACE_ID, "艇番", PLAYER_ID, "名前", "年齢", "支部", "体重", "階級", "全国勝率", "全国2率", "当地勝率", "当地2率", "モーター2率", "ボート2率"]
+SCHEDULE_PATTERN = re.compile(r"^([1-6])\s(\d{4})(\D+)(\d{2})(\D+)(\d{2})([AB][12])\s+(\d+.\d{2})\s+(\d+.\d{2})\s+(\d+.\d{2})\s+(\d+.\d{2})\s+\d+\s+(\d+.\d{2})\s+\d+\s+(\d+.\d{2})")
 
-RESULT_HEADER = [RACE_HEADER, "順位", PLAYER_ID_HEADER, "展示"]
-RESULT_PATTERN = r"\s+0(\d)\s+\d\s+(\d{4})\s+\D+\s\d+\s+\d+\s+(\d+.\d{2})"
+RESULT_HEADER = [RACE_ID, "順位", PLAYER_ID, "展示"]
+RESULT_PATTERN = re.compile(r"\s+0(\d)\s+\d\s+(\d{4})\s+\D+\s\d+\s+\d+\s+(\d+.\d{2})")
 
-SAVE_DIR = "result"
+ODDS_HEADER = [RACE_ID, "単勝", "複勝1", "複勝2", "2連単", "2連複", "拡連複12", "拡連複13", "拡連複23", "3連単", "3連複"]
+ODDS_PATTERN = re.compile(
+    r"\s+単勝\s+\d\s+(\d+)\s+複勝\s+\d\s+(\d+)\s+\d\s+(\d+)" \
+    r"\s+２連単\s+\d-\d\s+(\d+)\s+人気\s+\d+\s+２連複\s+\d-\d\s+(\d+)\s+人気\s+\d+" \
+    r"\s+拡連複\s+\d-\d\s+(\d+)\s+人気\s+\d+\s+\d-\d\s+(\d+)\s+人気\s+\d+" \
+    r"\s+\d-\d\s+(\d+)\s+人気\s+\d+\s+３連単\s+\d-\d-\d\s+(\d+)\s+人気\s+\d+" \
+    r"\s+３連複\s+\d-\d-\d\s+(\d+)\s+人気\s+\d+"
+)
+
+class Directory:
+    SAVE_DIR = "table"
+    ODDS_DIR = "odds"
 
 class DownloadType:
     """URLに渡される識別文字"""
@@ -81,8 +91,8 @@ def download(date: str, download_type: str, delimiter: str = '-', decompress: bo
         res: requests.Response = requests.get(url)
 
         # インターバルを置く
-        print(f"{INTERVAL}秒スリープしています")
-        sleep(INTERVAL)
+        print(f"{REQUEST_INTERVAL}秒スリープしています")
+        sleep(REQUEST_INTERVAL)
 
         # とりあえず保存しておく。何度もアクセスすると迷惑がかかる
         with open(lzh_filename, "wb") as f:
@@ -113,14 +123,14 @@ def parse_schedule(file, **kwargs):
     return parse(file, SCHEDULE_PATTERN, header=SCHEDULE_HEADER, **kwargs)
 
 
-def parse(file, pattern_string: str, header: list = None, save_as_csv: bool = True) -> str or None:
+def parse_odds(file, **kwargs):
+    return parse(file, r"\s+単勝", header=ODDS_HEADER, odds=True, **kwargs)
+    
+
+def parse(file, pattern: re.Pattern, header: list = None, save_as_csv: bool = True, odds: bool = False, filename: str = None) -> str or None:
     """
     save_as_csv: Falseならプレビューだけする
     """
-    header_pattern = re.compile(HEADER_PATTERN)
-    race_pattern = re.compile(RACE_PATTERN)
-    pattern = re.compile(pattern_string)
-
     rows: list[list] = []
     race_name = None
     race_num = 0
@@ -128,20 +138,26 @@ def parse(file, pattern_string: str, header: list = None, save_as_csv: bool = Tr
     # 重い while + if + append でやや遅い
     with open(file, "r", encoding="cp932") as f:
         while line := f.readline():
-            if re.match(header_pattern, line):
-
+            if re.match(HEADER_PATTERN, line):
                 for _ in range(2):
                     line = f.readline()
 
-                ret = re.match(race_pattern, line)
+                ret = re.match(RACE_PATTERN, line)
                 race_name = ret.groups()[0]
                 race_num = 0
 
             if re.search(r"H1800m|Ｈ１８００ｍ", line):
                 # レースのラウンドを更新。
                 race_num += 1
-
+                
             if ret := re.match(pattern, line):
+                if odds:
+                    lines = line
+                    for _ in range(8):
+                        lines += f.readline()
+
+                    ret = re.match(ODDS_PATTERN, lines)
+
                 # 全角スペースを置換するかどうか
                 # line = line.replace("\u3000", "")
                 row = list(ret.groups())
@@ -153,14 +169,22 @@ def parse(file, pattern_string: str, header: list = None, save_as_csv: bool = Tr
                 rows.append(row)
 
     if save_as_csv:
-        # フォーマットに従っていれば、以下で正常にファイル名が指定される
-        filename: str = file.replace(".TXT", ".CSV")
+        if filename is None:
+            # フォーマットに従っていれば、以下で正常にファイル名が指定される
+            filename: str = file.replace(".TXT", ".CSV")
+            
+            # オッズの取得ならば、K→Oに変換。強引なので後でリファクタリングするかも
+            if odds:
+                filename = filename.replace("K", "O")
+            
+        filename = write_csv(filename, rows, header)
         print(f"{filename} を保存しました")
-        return write_csv(filename, rows, header)
+        return filename
+    
     else:
         for row in rows:
             print(row)
-
+            
 
 def write_csv(filename: str, rows: list[list], header: list) -> str:
     # 従っていない場合は以下で対応
@@ -180,7 +204,7 @@ def write_csv(filename: str, rows: list[list], header: list) -> str:
 def merge(left_file, right_file, filename: str, on=None) -> str:
     # pdでmergeする。
     if on is None:
-        on = [PLAYER_ID_HEADER, RACE_HEADER]
+        on = [PLAYER_ID, RACE_ID]
 
     left = pd.read_csv(left_file)
     right = pd.read_csv(right_file)
@@ -190,9 +214,9 @@ def merge(left_file, right_file, filename: str, on=None) -> str:
     return filename
 
 
-def make_boatrace_csv(date: str, filename: str = None, only_result: bool = True):
-    os.makedirs(SAVE_DIR, exist_ok=True)
-
+def make_boatrace_csv(date: str, filename: str = None, with_odds: bool = True, only_result: bool = True):
+    os.makedirs(Directory.SAVE_DIR, exist_ok=True)
+    
     r_files: list[str] = download_result(date, decompress=True)
     s_files: list[str] = download_schedule(date, decompress=True)
 
@@ -200,7 +224,12 @@ def make_boatrace_csv(date: str, filename: str = None, only_result: bool = True)
     s_csv_files = [parse_schedule(file) for file in s_files]
 
     for r_file, s_file in zip(r_csv_files, s_csv_files):
-        merge(r_file, s_file, filename=filename if filename else os.path.join(SAVE_DIR, f"{date}.csv"))
+        merge(r_file, s_file, filename=filename if filename else os.path.join(Directory.SAVE_DIR, f"{date}.csv"))
+        
+    if with_odds:
+        os.makedirs(Directory.ODDS_DIR, exist_ok=True)
+        for r_file in r_files:
+            parse_odds(r_file, filename=os.path.join(Directory.ODDS_DIR, f"{date}.csv"))
 
     if only_result:
         for file in r_files + s_files + r_csv_files + s_csv_files:
@@ -215,4 +244,6 @@ def make_month_boatrace_csv(year:int, month:int):
 
 if __name__ == '__main__':
     # make_boatrace_csv("2020-09-06")
-    make_month_boatrace_csv(2020, 8)
+    # parse_odds("K200906.TXT")
+    make_month_boatrace_csv(2020, 9)
+    
