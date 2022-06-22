@@ -1,6 +1,5 @@
 import os.path
 from time import sleep
-
 import requests
 import lhafile
 import re
@@ -10,13 +9,6 @@ import calendar
 
 from patterns import * 
 
-# http://www1.mbrace.or.jp/od2/K/YYYYMM/kYYMMDD.lzh -> 競艇結果表
-# http://www1.mbrace.or.jp/od2/B/YYYYMM/bYYMMDD.lzh -> 競艇番組表
-
-# ダウンロードする際に使用する公式サイトのURL。取得間隔には注意
-TEMPLATE_URL = "http://www1.mbrace.or.jp/od2/{4}/{0}{2}/{5}{1}{2}{3}.lzh"
-REQUEST_INTERVAL = 3
-
 PLAYER_ID = "選手登番"
 RACE_ID = "レースID"
 
@@ -25,9 +17,16 @@ class Directory:
     ODDS_DIR = "odds"
 
 class Downloader:
+    # http://www1.mbrace.or.jp/od2/K/YYYYMM/kYYMMDD.lzh -> 競艇結果表
+    # http://www1.mbrace.or.jp/od2/B/YYYYMM/bYYMMDD.lzh -> 競艇番組表
+
     """URLに渡される識別文字"""
     RESULT = "K"
     SCHEDULE = "B"
+    
+    # ダウンロードする際に使用する公式サイトのURL。取得間隔には注意
+    TEMPLATE_URL = "http://www1.mbrace.or.jp/od2/{4}/{0}{2}/{5}{1}{2}{3}.lzh"
+    REQUEST_INTERVAL = 3
 
     @classmethod
     def download_result(cls, date: str, **kwargs):
@@ -53,13 +52,13 @@ class Downloader:
 
         else:
             year, month, day = date.split(delimiter)
-            url: str = TEMPLATE_URL.format(year, year[2:], month, day, download_type, download_type.lower())
+            url: str = cls.TEMPLATE_URL.format(year, year[2:], month, day, download_type, download_type.lower())
             print(f"{url} を取得しています")
             res: requests.Response = requests.get(url)
 
             # インターバルを置く
-            print(f"{REQUEST_INTERVAL}秒スリープしています")
-            sleep(REQUEST_INTERVAL)
+            print(f"{cls.REQUEST_INTERVAL}秒スリープしています")
+            sleep(cls.REQUEST_INTERVAL)
 
             # とりあえず保存しておく。何度もアクセスすると迷惑がかかる
             with open(lzh_filename, "wb") as f:
@@ -68,18 +67,23 @@ class Downloader:
             print(f"{lzh_filename} を保存しました")
 
         if decompress:
-            f = lhafile.Lhafile(lzh_filename)
-
-            for info in f.infolist():
-                filename = info.filename
-                with open(filename, "wb") as tf:
-                    tf.write(f.read(info.filename))
-
-                print(f"{filename} を保存しました")
-
-            return f.namelist()
+            return cls.decompress(lzh_filename)
         else:
             return lzh_filename
+        
+    @classmethod
+    def decompress(cls, lzh_filename: str) ->  list[str]:
+        f = lhafile.Lhafile(lzh_filename)
+
+        for info in f.infolist():
+            filename = info.filename
+            with open(filename, "wb") as tf:
+                tf.write(f.read(info.filename))
+
+            print(f"{filename} を保存しました")
+            
+        return f.namelist()
+        
 
 class Parser:    
     SCHEDULE_HEADER = [RACE_ID, "艇番", PLAYER_ID, "名前", "年齢", "支部", "体重", "階級", "全国勝率", "全国2率", "当地勝率", "当地2率", "モーター2率", "ボート2率"]
@@ -127,7 +131,7 @@ class Parser:
                     row = []
                     
                     if odds:
-                        #                               -> header ?
+                        #                             => header
                         for kind, _pattern in zip(cls.ODDS_HEADER[1:], ODDS_PATTERNS):
                             ret = re.match(_pattern, line)
                             
