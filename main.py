@@ -103,7 +103,7 @@ class Parser:
         return cls.parse(file, r"\s+単勝", header=cls.ODDS_HEADER, odds=True, **kwargs)
         
     @classmethod
-    def parse(cls, file, pattern: re.Pattern, header: list = None, save_as_csv: bool = True, odds: bool = False, filename: str = None) -> str or None:
+    def parse(cls, file, pattern: re.Pattern, header: list = None, save_as_csv: bool = True, odds: bool = False, filename: str = None, date:str=None) -> str or None:
         """
         save_as_csv: Falseならプレビューだけする
         """
@@ -115,19 +115,30 @@ class Parser:
         with open(file, "r", encoding="cp932") as f:
             while line := f.readline():
                 if re.match(HEADER_PATTERN, line):
+                    # かなり強引な取得をしている。
+                    # 元データが全角と半角入り乱れているのが悪い。かと言ってどちらかに合わせるわけにもいかないため、ゴリ押しする
+                    # ２行下にレース名がある
                     for _ in range(2):
                         line = f.readline()
 
-                    ret = re.match(RACE_PATTERN, line)
+                    ret = re.match(RACE_NAME_PATTERN, line)
                     race_name = ret.groups()[0]
+                    
+                    # さらに２行下に会場名がある
+                    for _ in range(2):
+                        line = f.readline()
+                        
+                    ret = re.search(RACE_PLACE_PATTERN, line)
+                    race_place = ret.groups()[0]
+                    
                     race_num = 0
 
-                if re.search(r"H1800m|Ｈ１８００ｍ", line):
+                if re.search(r"H\d+m|Ｈ[^ｍ]+ｍ", line):
                     # レースのラウンドを更新。
                     race_num += 1
                     
                 if ret := re.match(pattern, line):
-                    race_id: str = race_name + str(race_num)
+                    race_id: str = f"{date}{race_place}{race_name}{race_num}R"
                     row = []
                     
                     if odds:
@@ -210,8 +221,8 @@ def make_boatrace_csv(date: str, filename: str = None, with_odds: bool = True, o
     r_files: list[str] = Downloader.download_result(date, decompress=True)
     s_files: list[str] = Downloader.download_schedule(date, decompress=True)
 
-    r_csv_files = [Parser.parse_result(file) for file in r_files]
-    s_csv_files = [Parser.parse_schedule(file) for file in s_files]
+    r_csv_files = [Parser.parse_result(file, date=date) for file in r_files]
+    s_csv_files = [Parser.parse_schedule(file, date=date) for file in s_files]
 
     for r_file, s_file in zip(r_csv_files, s_csv_files):
         merge(r_file, s_file, filename=filename if filename else os.path.join(Directory.SAVE_DIR, f"{date}.csv"))
@@ -219,7 +230,7 @@ def make_boatrace_csv(date: str, filename: str = None, with_odds: bool = True, o
     if with_odds:
         os.makedirs(Directory.ODDS_DIR, exist_ok=True)
         for r_file in r_files:
-            Parser.parse_odds(r_file, filename=os.path.join(Directory.ODDS_DIR, f"{date}.csv"))
+            Parser.parse_odds(r_file, filename=os.path.join(Directory.ODDS_DIR, f"{date}.csv"), date=date)
 
     if only_result:
         for file in r_files + s_files + r_csv_files + s_csv_files:
@@ -233,8 +244,9 @@ def make_month_boatrace_csv(year:int, month:int, **kwargs) -> None:
         make_boatrace_csv(date, **kwargs)
 
 if __name__ == '__main__':
-    # make_boatrace_csv("2020-08-30", only_result=False)
+    # make_boatrace_csv("2020-09-03", only_result=False)
     # make_boatrace_csv("2020-09-15")
     # parse_odds("K200906.TXT")
     make_month_boatrace_csv(2020, 8)
+    make_month_boatrace_csv(2020, 9)
     

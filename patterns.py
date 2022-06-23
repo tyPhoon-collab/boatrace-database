@@ -21,7 +21,8 @@ import re
 #       同率を考慮していない
 
 HEADER_PATTERN = re.compile(r"^\s{28}＊＊＊　競走成績　＊＊＊|^\s{28}＊＊＊　番組表　＊＊＊")
-RACE_PATTERN = re.compile(r"\s{10,10}([^\s]+)")
+RACE_NAME_PATTERN = re.compile(r"\s{10,10}([^\s]+)")
+RACE_PLACE_PATTERN = re.compile(r"ボートレース(\D+)\s")
 SCHEDULE_PATTERN = re.compile(r"^([1-6])\s(\d{4})(\D+)(\d{2})(\D+)(\d{2})([AB][12])\s+(\d+.\d{2})\s+(\d+.\d{2})\s+(\d+.\d{2})\s+(\d+.\d{2})\s+\d+\s+(\d+.\d{2})\s+\d+\s+(\d+.\d{2})")
 RESULT_PATTERN = re.compile(r"\s+0(\d)\s+\d\s+(\d{4})\s+\D+\s\d+\s+\d+\s+(\d+.\d{2})")
 ODDS_PATTERNS = (
