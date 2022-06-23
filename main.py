@@ -2,19 +2,38 @@ import os.path
 from time import sleep
 import requests
 import lhafile
-import re
 import csv
 import pandas as pd
 import calendar
+import sqlite3
 
-from patterns import * 
+from patterns import *
 
 PLAYER_ID = "選手登番"
 RACE_ID = "レースID"
 
+
 class Directory:
     SAVE_DIR = "table"
     ODDS_DIR = "odds"
+
+
+class SQLCommand:
+    CREATE_ODDS_TABLE = """CREATE TABLE IF NOT EXISTS odds (
+        race_id TEXT,
+        tan1 INTEGER,
+        huku1 INTEGER,
+        huku2 INTEGER,
+        tan2 INTEGER,
+        puku2 INTEGER,
+        kaku12 INTEGER,
+        kaku13 INTEGER,
+        kaku23 INTEGER,
+        tan3 INTEGER,
+        puku3 INTEGER
+    )"""
+    INSERT = "INSERT INTO odds VALUES (?,?,?,?,?, ?,?,?,?,?, ?)"
+    DROP_ODDS = "DROP TABLE IF EXISTS odds"
 
 class Downloader:
     # http://www1.mbrace.or.jp/od2/K/YYYYMM/kYYMMDD.lzh -> 競艇結果表
@@ -23,7 +42,7 @@ class Downloader:
     """URLに渡される識別文字"""
     RESULT = "K"
     SCHEDULE = "B"
-    
+
     # ダウンロードする際に使用する公式サイトのURL。取得間隔には注意
     TEMPLATE_URL = "http://www1.mbrace.or.jp/od2/{4}/{0}{2}/{5}{1}{2}{3}.lzh"
     REQUEST_INTERVAL = 3
@@ -38,7 +57,7 @@ class Downloader:
 
     @classmethod
     def download(cls, date: str, download_type: str, delimiter: str = '-', decompress: bool = False,
-                check_existence: bool = True) -> str or list[str]:
+                 check_existence: bool = True) -> str or list[str]:
         """
             文字列 YYYY-MM-DD を引数にとることとする
             Windows-31jで保存される
@@ -70,9 +89,9 @@ class Downloader:
             return cls.decompress(lzh_filename)
         else:
             return lzh_filename
-        
+
     @classmethod
-    def decompress(cls, lzh_filename: str) ->  list[str]:
+    def decompress(cls, lzh_filename: str) -> list[str]:
         f = lhafile.Lhafile(lzh_filename)
 
         for info in f.infolist():
@@ -81,12 +100,13 @@ class Downloader:
                 tf.write(f.read(info.filename))
 
             print(f"{filename} を保存しました")
-            
-        return f.namelist()
-        
 
-class Parser:    
-    SCHEDULE_HEADER = [RACE_ID, "艇番", PLAYER_ID, "名前", "年齢", "支部", "体重", "階級", "全国勝率", "全国2率", "当地勝率", "当地2率", "モーター2率", "ボート2率"]
+        return f.namelist()
+
+
+class Parser:
+    SCHEDULE_HEADER = [RACE_ID, "艇番", PLAYER_ID, "名前", "年齢", "支部", "体重", "階級", "全国勝率", "全国2率", "当地勝率", "当地2率", "モーター2率",
+                       "ボート2率"]
     RESULT_HEADER = [RACE_ID, "順位", PLAYER_ID, "展示"]
     ODDS_HEADER = [RACE_ID, "単勝", "複勝1", "複勝2", "2連単", "2連複", "拡連複12", "拡連複13", "拡連複23", "3連単", "3連複"]
 
@@ -101,9 +121,10 @@ class Parser:
     @classmethod
     def parse_odds(cls, file, **kwargs):
         return cls.parse(file, ODDS_PATTERN, header=cls.ODDS_HEADER, odds=True, **kwargs)
-        
+
     @classmethod
-    def parse(cls, file, pattern: re.Pattern, header: list = None, save_as_csv: bool = True, odds: bool = False, filename: str = None, date:str=None) -> str or None:
+    def parse(cls, file, pattern: re.Pattern, header: list = None, save_as_csv: bool = True, odds: bool = False,
+              filename: str = None, date: str = None, db_con=None) -> str or None:
         """
         save_as_csv: Falseならプレビューだけする
         """
@@ -123,45 +144,45 @@ class Parser:
 
                     ret = re.match(RACE_NAME_PATTERN, line)
                     race_name = ret.groups()[0]
-                    
+
                     # さらに２行下に会場名がある
                     for _ in range(2):
                         line = f.readline()
-                        
+
                     ret = re.search(RACE_PLACE_PATTERN, line)
                     race_place = ret.groups()[0]
-                    
+
                     race_num = 0
 
                 if re.search(r"H\d+m|Ｈ[^ｍ]+ｍ", line):
                     # レースのラウンドを更新。
                     race_num += 1
-                    
+
                 if ret := re.match(pattern, line):
                     race_id: str = f"{date}{race_place}{race_name}{race_num}R"
                     row = []
-                    
+
                     if odds:
                         # 5人が違反するとレース不成立となる。
                         if "レース不成立" in line:
                             print(race_id, "不成立のレースを検知")
                             row = [-1] * len(ODDS_PATTERNS)
-                            
-                        else:                            
+
+                        else:
                             for kind, _pattern in zip(cls.ODDS_HEADER[1:], ODDS_PATTERNS):
                                 ret = re.match(_pattern, line)
-                                
+
                                 if ret:
                                     row.append(ret.groups()[0])
-                                else:            
+                                else:
                                     print(race_id, kind, "オッズの検知に失敗")
                                     row.append(-1)
-            
+
                                 # 基本的には１行に１つの情報が取得できるが、複勝だけは横並び。
                                 # 処理の都合上、少し強引だが、以下のようにする                    
                                 if kind != "複勝1":
                                     line = f.readline()
-                            
+
                     else:
                         # 全角スペースを置換するかどうか
                         # line = line.replace("\u3000", "")
@@ -175,21 +196,26 @@ class Parser:
             if filename is None:
                 # フォーマットに従っていれば、以下で正常にファイル名が指定される
                 filename: str = file.replace(".TXT", ".CSV")
-                
+
                 # オッズの取得ならば、K→Oに変換。強引なので後でリファクタリングするかも
                 if odds:
                     filename = filename.replace("K", "O")
-                
-            filename = write_csv(filename, rows, header)
+
+            filename = write_csv(filename, rows, header, db_con)
             print(f"{filename} を保存しました")
             return filename
-        
+
         else:
             for row in rows:
                 print(row)
-            
 
-def write_csv(filename: str, rows: list[list], header: list) -> str:
+
+def write_csv(filename: str, rows: list[list], header: list, db_con=None) -> str or None:
+    if db_con:
+        cur = db_con.cursor()
+        cur.executemany(SQLCommand.INSERT, rows)
+        return
+
     # 従っていない場合は以下で対応
     if not filename.upper().endswith(".CSV"):
         filename += ".csv"
@@ -204,25 +230,51 @@ def write_csv(filename: str, rows: list[list], header: list) -> str:
     return filename
 
 
-def merge(left_file, right_file, filename: str, on=None) -> str:
+def merge(left_file, right_file, filename: str, on=None, db_con=None) -> str or None:
     # pdでmergeする。
     if on is None:
         on = [PLAYER_ID, RACE_ID]
 
     left = pd.read_csv(left_file)
     right = pd.read_csv(right_file)
-    pd.merge(left, right, on=on).to_csv(filename)
+
+    df = pd.merge(left, right, on=on)
+
+    if db_con:
+        index_label = ["race_id", "rank", "player_id", "exhibition_time", "boat_order", "name", "old", "region", "weight", "class", "global_first", "global_second", "local_first", "local_second", "motor_second", "boat_second"]
+        dtype = {
+            "race_id": "TEXT", 
+            "rank": "INTEGER", 
+            "player_id": "INTEGER",
+            "exhibition_time": "REAL",
+            "boat_order": "INTEGER", 
+            "name": "TEXT", 
+            "old": "INTEGER", 
+            "region": "TEXT",
+            "weight": "INTEGER",
+            "class": "TEXT", 
+            "grobal_first": "REAL", 
+            "grobal_second": "REAL", 
+            "local_first": "REAL", 
+            "local_second": "REAL", 
+            "motor_second": "REAL", 
+            "boat_second": "REAL"
+        }
+        df.to_sql("boatrace", db_con, None, 'replace', index=False, index_label=index_label, dtype=dtype)
+        return
+
+    df.to_csv(filename, index=False)
     print(f"{filename} マージしました")
 
     return filename
 
 
-def make_boatrace_csv(date: str, filename: str = None, with_odds: bool = True, only_result: bool = True) -> None:
+def make_boatrace_csv(date: str, filename: str = None, with_odds: bool = True, only_result: bool = True, db_con: str=None) -> None:
     """
     date format :str -> YYYY-MM-DD
     """
     os.makedirs(Directory.SAVE_DIR, exist_ok=True)
-    
+
     r_files: list[str] = Downloader.download_result(date, decompress=True)
     s_files: list[str] = Downloader.download_schedule(date, decompress=True)
 
@@ -230,28 +282,46 @@ def make_boatrace_csv(date: str, filename: str = None, with_odds: bool = True, o
     s_csv_files = [Parser.parse_schedule(file, date=date) for file in s_files]
 
     for r_file, s_file in zip(r_csv_files, s_csv_files):
-        merge(r_file, s_file, filename=filename if filename else os.path.join(Directory.SAVE_DIR, f"{date}.csv"))
-        
+        merge(r_file, s_file, filename=filename if filename else os.path.join(Directory.SAVE_DIR, f"{date}.csv"), db_con=db_con)
+
     if with_odds:
         os.makedirs(Directory.ODDS_DIR, exist_ok=True)
         for r_file in r_files:
-            Parser.parse_odds(r_file, filename=os.path.join(Directory.ODDS_DIR, f"{date}.csv"), date=date)
+            Parser.parse_odds(r_file, filename=os.path.join(Directory.ODDS_DIR, f"{date}.csv"), date=date, db_con=db_con)
 
     if only_result:
         for file in r_files + s_files + r_csv_files + s_csv_files:
             os.remove(file)
 
 
-def make_months_boatrace_csv(year:int, *months, **kwargs) -> None:
+def make_months_boatrace_csv(year: int, *months, **kwargs) -> None:
     for month in months:
-        days:int = calendar.monthrange(year, month)[1]
+        days: int = calendar.monthrange(year, month)[1]
         for day in range(1, days + 1):
-            date:str = f"{year}-{month:02}-{day:02}"
+            date: str = f"{year}-{month:02}-{day:02}"
             make_boatrace_csv(date, **kwargs)
 
+
 if __name__ == '__main__':
-    # make_boatrace_csv("2020-08-14", only_result=False)
+    con = sqlite3.connect("boatrace.db")
+    cur = con.cursor()
+    cur.execute(SQLCommand.DROP_ODDS)
+    cur.execute(SQLCommand.CREATE_ODDS_TABLE)
+    
+    # make_boatrace_csv("2020-08-14", db_con=con)
     # make_boatrace_csv("2020-09-15")
     # parse_odds("K200906.TXT")
-    make_months_boatrace_csv(2020, 8,9)
+    # make_months_boatrace_csv(2020, 8, 9)
+    make_months_boatrace_csv(2020, 8, 9, db_con=con)
     
+    # for row in cur.execute("SELECT * FROM boatrace"):
+    #     print(row)
+        
+    # for row in cur.execute("SELECT * FROM odds"):
+    #     print(row)
+
+    # a = pd.read_sql("SELECT * FROM boatrace WHERE レースID LIKE '2020-08-14%'", con)
+    # print(a)
+
+    con.commit()
+    con.close()
