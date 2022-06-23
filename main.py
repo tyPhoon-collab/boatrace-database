@@ -100,7 +100,7 @@ class Parser:
 
     @classmethod
     def parse_odds(cls, file, **kwargs):
-        return cls.parse(file, r"\s+単勝", header=cls.ODDS_HEADER, odds=True, **kwargs)
+        return cls.parse(file, ODDS_PATTERN, header=cls.ODDS_HEADER, odds=True, **kwargs)
         
     @classmethod
     def parse(cls, file, pattern: re.Pattern, header: list = None, save_as_csv: bool = True, odds: bool = False, filename: str = None, date:str=None) -> str or None:
@@ -142,20 +142,25 @@ class Parser:
                     row = []
                     
                     if odds:
-                        #                             => header
-                        for kind, _pattern in zip(cls.ODDS_HEADER[1:], ODDS_PATTERNS):
-                            ret = re.match(_pattern, line)
+                        # 5人が違反するとレース不成立となる。
+                        if "レース不成立" in line:
+                            print(race_id, "不成立のレースを検知")
+                            row = [-1] * len(ODDS_PATTERNS)
                             
-                            if ret:
-                                row.append(ret.groups()[0])
-                            else:            
-                                print(race_id, kind, "オッズの検知に失敗")
-                                row.append(-1)
-        
-                            # 基本的には１行に１つの情報が取得できるが、複勝だけは横並び。
-                            # 処理の都合上、少し強引だが、以下のようにする                    
-                            if kind != "複勝1":
-                                line = f.readline()
+                        else:                            
+                            for kind, _pattern in zip(cls.ODDS_HEADER[1:], ODDS_PATTERNS):
+                                ret = re.match(_pattern, line)
+                                
+                                if ret:
+                                    row.append(ret.groups()[0])
+                                else:            
+                                    print(race_id, kind, "オッズの検知に失敗")
+                                    row.append(-1)
+            
+                                # 基本的には１行に１つの情報が取得できるが、複勝だけは横並び。
+                                # 処理の都合上、少し強引だが、以下のようにする                    
+                                if kind != "複勝1":
+                                    line = f.readline()
                             
                     else:
                         # 全角スペースを置換するかどうか
@@ -237,16 +242,16 @@ def make_boatrace_csv(date: str, filename: str = None, with_odds: bool = True, o
             os.remove(file)
 
 
-def make_month_boatrace_csv(year:int, month:int, **kwargs) -> None:
-    days:int = calendar.monthrange(year, month)[1]
-    for day in range(1, days + 1):
-        date:str = f"{year}-{month:02}-{day:02}"
-        make_boatrace_csv(date, **kwargs)
+def make_months_boatrace_csv(year:int, *months, **kwargs) -> None:
+    for month in months:
+        days:int = calendar.monthrange(year, month)[1]
+        for day in range(1, days + 1):
+            date:str = f"{year}-{month:02}-{day:02}"
+            make_boatrace_csv(date, **kwargs)
 
 if __name__ == '__main__':
-    # make_boatrace_csv("2020-09-03", only_result=False)
+    # make_boatrace_csv("2020-08-14", only_result=False)
     # make_boatrace_csv("2020-09-15")
     # parse_odds("K200906.TXT")
-    make_month_boatrace_csv(2020, 8)
-    make_month_boatrace_csv(2020, 9)
+    make_months_boatrace_csv(2020, 8,9)
     
