@@ -274,10 +274,12 @@ if __name__ == '__main__':
     con = sqlite3.connect(DB_NAME)
     
     # make_boatrace_csv("2020-08-14", db_con=con)
-    # make_boatrace_csv("2020-09-15")
+    # make_boatrace_csv("2020-09-15", only_result=False)
+    # make_boatrace_csv("2020-09-16", only_result=False)
+    # make_boatrace_csv("2020-09-17", only_result=False)
     # parse_odds("K200906.TXT")
     # make_months_boatrace_csv(2020, 8, 9)
-    make_months_boatrace_csv(2020, 7,8,9, db_con=con)
+    make_months_boatrace_csv(2020, 6,7,8,9, db_con=con)
     
     # for row in cur.execute("SELECT * FROM boatrace"):
     #     print(row)
@@ -286,8 +288,13 @@ if __name__ == '__main__':
     #     print(row)
 
     # a = pd.read_sql("SELECT * FROM boatrace WHERE レースID LIKE '2020-09-28%'", con)
-    # print(a)
     # a = pd.read_sql("SELECT * FROM odds WHERE レースID LIKE '2020-09-29%'", con)
+    # a = pd.read_sql("""SELECT * FROM odds
+    #                 WHERE 
+    #                 レースID LIKE '2020-09-28%' OR
+    #                 レースID LIKE '2020-09-29%' OR
+    #                 レースID LIKE '2020-09-30%'
+    #                 """, con)
     # print(a)
 
     con.commit()
