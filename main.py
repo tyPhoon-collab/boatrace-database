@@ -11,30 +11,12 @@ from patterns import *
 
 PLAYER_ID = "選手登番"
 RACE_ID = "レースID"
-
+DB_NAME = "boatrace.db"
 
 class Directory:
     SAVE_DIR = "table"
     ODDS_DIR = "odds"
-
-
-class SQLCommand:
-    CREATE_ODDS_TABLE = """CREATE TABLE IF NOT EXISTS odds (
-        race_id TEXT,
-        tan1 INTEGER,
-        huku1 INTEGER,
-        huku2 INTEGER,
-        tan2 INTEGER,
-        puku2 INTEGER,
-        kaku12 INTEGER,
-        kaku13 INTEGER,
-        kaku23 INTEGER,
-        tan3 INTEGER,
-        puku3 INTEGER
-    )"""
-    INSERT = "INSERT INTO odds VALUES (?,?,?,?,?, ?,?,?,?,?, ?)"
-    DROP_ODDS = "DROP TABLE IF EXISTS odds"
-
+    
 class Downloader:
     # http://www1.mbrace.or.jp/od2/K/YYYYMM/kYYMMDD.lzh -> 競艇結果表
     # http://www1.mbrace.or.jp/od2/B/YYYYMM/bYYMMDD.lzh -> 競艇番組表
@@ -99,14 +81,14 @@ class Downloader:
             with open(filename, "wb") as tf:
                 tf.write(f.read(info.filename))
 
-            print(f"{filename} を保存しました")
+            # print(f"{filename} を保存しました")
 
         return f.namelist()
 
 
 class Parser:
-    SCHEDULE_HEADER = [RACE_ID, "艇番", PLAYER_ID, "名前", "年齢", "支部", "体重", "階級", "全国勝率", "全国2率", "当地勝率", "当地2率", "モーター2率",
-                       "ボート2率"]
+    SCHEDULE_HEADER = [RACE_ID, "艇番", PLAYER_ID, "名前", "年齢", "支部", "体重", "階級", "全国勝率", "全国2率",
+                       "当地勝率", "当地2率", "モーター2率","ボート2率"]
     RESULT_HEADER = [RACE_ID, "順位", PLAYER_ID, "展示"]
     ODDS_HEADER = [RACE_ID, "単勝", "複勝1", "複勝2", "2連単", "2連複", "拡連複12", "拡連複13", "拡連複23", "3連単", "3連複"]
 
@@ -212,8 +194,8 @@ class Parser:
 
 def write_csv(filename: str, rows: list[list], header: list, db_con=None) -> str or None:
     if db_con:
-        cur = db_con.cursor()
-        cur.executemany(SQLCommand.INSERT, rows)
+        df = pd.DataFrame(rows, columns=header)
+        df.to_sql("odds", db_con, None, 'append', index=False)
         return
 
     # 従っていない場合は以下で対応
@@ -241,26 +223,7 @@ def merge(left_file, right_file, filename: str, on=None, db_con=None) -> str or 
     df = pd.merge(left, right, on=on)
 
     if db_con:
-        index_label = ["race_id", "rank", "player_id", "exhibition_time", "boat_order", "name", "old", "region", "weight", "class", "global_first", "global_second", "local_first", "local_second", "motor_second", "boat_second"]
-        dtype = {
-            "race_id": "TEXT", 
-            "rank": "INTEGER", 
-            "player_id": "INTEGER",
-            "exhibition_time": "REAL",
-            "boat_order": "INTEGER", 
-            "name": "TEXT", 
-            "old": "INTEGER", 
-            "region": "TEXT",
-            "weight": "INTEGER",
-            "class": "TEXT", 
-            "grobal_first": "REAL", 
-            "grobal_second": "REAL", 
-            "local_first": "REAL", 
-            "local_second": "REAL", 
-            "motor_second": "REAL", 
-            "boat_second": "REAL"
-        }
-        df.to_sql("boatrace", db_con, None, 'replace', index=False, index_label=index_label, dtype=dtype)
+        df.to_sql("boatrace", db_con, None, 'append', index=False)
         return
 
     df.to_csv(filename, index=False)
@@ -285,7 +248,9 @@ def make_boatrace_csv(date: str, filename: str = None, with_odds: bool = True, o
         merge(r_file, s_file, filename=filename if filename else os.path.join(Directory.SAVE_DIR, f"{date}.csv"), db_con=db_con)
 
     if with_odds:
-        os.makedirs(Directory.ODDS_DIR, exist_ok=True)
+        if not db_con:
+            os.makedirs(Directory.ODDS_DIR, exist_ok=True)
+    
         for r_file in r_files:
             Parser.parse_odds(r_file, filename=os.path.join(Directory.ODDS_DIR, f"{date}.csv"), date=date, db_con=db_con)
 
@@ -303,16 +268,16 @@ def make_months_boatrace_csv(year: int, *months, **kwargs) -> None:
 
 
 if __name__ == '__main__':
-    con = sqlite3.connect("boatrace.db")
-    cur = con.cursor()
-    cur.execute(SQLCommand.DROP_ODDS)
-    cur.execute(SQLCommand.CREATE_ODDS_TABLE)
+    # 毎回初期化する。この程度のデータ量ならば、一括削除してしまうのが楽
+    # os.remove(DB_NAME)
+    # 以下で接続。今回はpandasのto_sqlを使用してデータベースに登録
+    con = sqlite3.connect(DB_NAME)
     
     # make_boatrace_csv("2020-08-14", db_con=con)
     # make_boatrace_csv("2020-09-15")
     # parse_odds("K200906.TXT")
     # make_months_boatrace_csv(2020, 8, 9)
-    make_months_boatrace_csv(2020, 8, 9, db_con=con)
+    # make_months_boatrace_csv(2020, 8, 9, db_con=con)
     
     # for row in cur.execute("SELECT * FROM boatrace"):
     #     print(row)
@@ -320,8 +285,11 @@ if __name__ == '__main__':
     # for row in cur.execute("SELECT * FROM odds"):
     #     print(row)
 
-    # a = pd.read_sql("SELECT * FROM boatrace WHERE レースID LIKE '2020-08-14%'", con)
+    # a = pd.read_sql("SELECT * FROM boatrace WHERE レースID LIKE '2020-09-28%'", con)
+    # print(a)
+    # a = pd.read_sql("SELECT * FROM odds WHERE レースID LIKE '2020-09-29%'", con)
     # print(a)
 
     con.commit()
     con.close()
+
