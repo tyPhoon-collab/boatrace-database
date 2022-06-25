@@ -1,5 +1,6 @@
 import os.path
 from time import sleep
+from tkinter import N
 import requests
 import lhafile
 import csv
@@ -89,7 +90,7 @@ class Downloader:
 class Parser:
     SCHEDULE_HEADER = [RACE_ID, "艇番", PLAYER_ID, "名前", "年齢", "支部", "体重", "階級", "全国勝率", "全国2率",
                        "当地勝率", "当地2率", "モーター2率","ボート2率"]
-    RESULT_HEADER = [RACE_ID, "順位", PLAYER_ID, "展示"]
+    RESULT_HEADER = [RACE_ID, "順位", PLAYER_ID, "展示", "天候", "風向", "風速", "波高"]
     ODDS_HEADER = [RACE_ID, "単勝", "複勝1", "複勝2", "2連単", "2連複", "拡連複12", "拡連複13", "拡連複23", "3連単", "3連複"]
 
     @classmethod
@@ -116,7 +117,7 @@ class Parser:
 
         # 重い while + if + append でやや遅い
         with open(file, "r", encoding="cp932") as f:
-            while line := f.readline():
+            while line := f.readline():                
                 if re.match(HEADER_PATTERN, line):
                     # かなり強引な取得をしている。
                     # 元データが全角と半角入り乱れているのが悪い。かと言ってどちらかに合わせるわけにもいかないため、ゴリ押しする
@@ -139,6 +140,12 @@ class Parser:
                 if re.search(r"H\d+m|Ｈ[^ｍ]+ｍ", line):
                     # レースのラウンドを更新。
                     race_num += 1
+                    # 強引だが、天候、風向、風の強さ、波の情報があれば末尾に追加するようにする
+                    if ret := re.search(RACE_ENV_PATTERN, line):
+                        env = ret.groups()
+                        # print(env)
+                    else:
+                        env = None
 
                 if ret := re.match(pattern, line):
                     race_id: str = f"{date}{race_place}{race_name}{race_num}R"
@@ -166,9 +173,12 @@ class Parser:
                                     line = f.readline()
 
                     else:
-                        # 全角スペースを置換するかどうか
+                        # 間に挟まっている全角スペースを置換するかどうか
                         # line = line.replace("\u3000", "")
                         row = list(ret.groups())
+                        
+                        if env:
+                            row.extend(env)
 
                     # レースIDを先頭に追加
                     row.insert(0, race_id)
@@ -223,7 +233,7 @@ def merge(left_file, right_file, filename: str, on=None, db_con=None) -> str or 
     df = pd.merge(left, right, on=on)
 
     if db_con:
-        df.to_sql("boatrace", db_con, None, 'append', index=False)
+        df.to_sql("race", db_con, None, 'append', index=False)
         return
 
     df.to_csv(filename, index=False)
@@ -278,8 +288,8 @@ if __name__ == '__main__':
     # make_boatrace_csv("2020-09-16", only_result=False)
     # make_boatrace_csv("2020-09-17", only_result=False)
     # parse_odds("K200906.TXT")
-    # make_months_boatrace_csv(2020, 8, 9)
-    make_months_boatrace_csv(2020, 6,7,8,9, db_con=con)
+    make_months_boatrace_csv(2020, 9)
+    # make_months_boatrace_csv(2020, 6,7,8,9, db_con=con)
     
     # for row in cur.execute("SELECT * FROM boatrace"):
     #     print(row)
