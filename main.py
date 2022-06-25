@@ -1,6 +1,5 @@
 import os.path
 from time import sleep
-from tkinter import N
 import requests
 import lhafile
 import csv
@@ -194,7 +193,10 @@ class Parser:
                     filename = filename.replace("K", "O")
 
             filename = write_csv(filename, rows, header, db_con)
-            print(f"{filename} を保存しました")
+    
+            if filename:
+                print(f"{filename} を保存しました")
+    
             return filename
 
         else:
@@ -288,8 +290,8 @@ if __name__ == '__main__':
     # make_boatrace_csv("2020-09-16", only_result=False)
     # make_boatrace_csv("2020-09-17", only_result=False)
     # parse_odds("K200906.TXT")
-    make_months_boatrace_csv(2020, 9)
-    # make_months_boatrace_csv(2020, 6,7,8,9, db_con=con)
+    # make_months_boatrace_csv(2020, 9)
+    make_months_boatrace_csv(2020, 6,7,8,9, db_con=con)
     
     # for row in cur.execute("SELECT * FROM boatrace"):
     #     print(row)
