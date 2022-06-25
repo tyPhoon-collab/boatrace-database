@@ -281,7 +281,7 @@ def make_months_boatrace_csv(year: int, *months, **kwargs) -> None:
 
 if __name__ == '__main__':
     # 毎回初期化する。この程度のデータ量ならば、一括削除してしまうのが楽
-    # os.remove(DB_NAME)
+    os.remove(DB_NAME)
     # 以下で接続。今回はpandasのto_sqlを使用してデータベースに登録
     con = sqlite3.connect(DB_NAME)
     cur = con.cursor()
@@ -292,7 +292,7 @@ if __name__ == '__main__':
     # make_boatrace_csv("2020-09-17", only_result=False)
     # parse_odds("K200906.TXT")
     # make_months_boatrace_csv(2020, 9)
-    # make_months_boatrace_csv(2020, 6,7,8,9, db_con=con)
+    make_months_boatrace_csv(2020, 1,2,3,4,5,6,7,8,9,10,11,12, db_con=con)
     
     # for row in cur.execute("SELECT * FROM race"):
     #     print(row)
