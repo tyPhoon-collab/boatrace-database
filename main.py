@@ -89,7 +89,7 @@ class Downloader:
 class Parser:
     SCHEDULE_HEADER = [RACE_ID, "艇番", PLAYER_ID, "名前", "年齢", "支部", "体重", "階級", "全国勝率", "全国2率",
                        "当地勝率", "当地2率", "モーター2率","ボート2率"]
-    RESULT_HEADER = [RACE_ID, "順位", PLAYER_ID, "展示", "天候", "風向", "風速", "波高"]
+    RESULT_HEADER = [RACE_ID, "順位", PLAYER_ID, "展示", "天候", "風向", "風速", "波高", "会場"]
     ODDS_HEADER = [RACE_ID, "単勝", "複勝1", "複勝2", "2連単", "2連複", "拡連複12", "拡連複13", "拡連複23", "3連単", "3連複"]
 
     @classmethod
@@ -141,7 +141,9 @@ class Parser:
                     race_num += 1
                     # 強引だが、天候、風向、風の強さ、波の情報があれば末尾に追加するようにする
                     if ret := re.search(RACE_ENV_PATTERN, line):
-                        env = ret.groups()
+                        env = list(ret.groups())
+                        # 会場名も末尾に追加する
+                        env.append(race_place)
                         # print(env)
                     else:
                         env = None
@@ -291,7 +293,7 @@ if __name__ == '__main__':
     # make_boatrace_csv("2020-09-16", only_result=False)
     # make_boatrace_csv("2020-09-17", only_result=False)
     # parse_odds("K200906.TXT")
-    # make_months_boatrace_csv(2020, 9)
+    # make_months_boatrace_csv(2020, 8)
     make_months_boatrace_csv(2020, 1,2,3,4,5,6,7,8,9,10,11,12, db_con=con)
     
     # for row in cur.execute("SELECT * FROM race"):
@@ -301,7 +303,8 @@ if __name__ == '__main__':
     #     print(row)
 
     # a = pd.read_sql("SELECT * FROM race WHERE レースID LIKE '2020-09-28%'", con)
-    # a = pd.read_sql("SELECT * FROM odds WHERE レースID LIKE '2020-09-29%'", con)
+    # a = pd.read_sql("SELECT * FROM odds WHERE レースID LIKE '2020-09-29%'", 
+    # con)
     # a = pd.read_sql("""SELECT * FROM odds
     #                 WHERE 
     #                 レースID LIKE '2020-09-28%' OR
