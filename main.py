@@ -1,5 +1,6 @@
 import os.path
 from time import sleep
+from matplotlib.pyplot import table
 import requests
 import lhafile
 import csv
@@ -16,7 +17,18 @@ DB_NAME = "boatrace.db"
 class Directory:
     SAVE_DIR = "table"
     ODDS_DIR = "odds"
+    ENV_DIR = "env"
+    LZH_DIR = "lzh"
+    TXT_DIR = "txt"
     
+    @classmethod
+    def makedirs(cls):
+        os.makedirs(cls.SAVE_DIR, exist_ok=True)
+        os.makedirs(cls.ODDS_DIR, exist_ok=True)
+        os.makedirs(cls.ENV_DIR , exist_ok=True)
+        os.makedirs(cls.LZH_DIR, exist_ok=True)
+        os.makedirs(cls.TXT_DIR, exist_ok=True)
+        
 class Downloader:
     # http://www1.mbrace.or.jp/od2/K/YYYYMM/kYYMMDD.lzh -> 競艇結果表
     # http://www1.mbrace.or.jp/od2/B/YYYYMM/bYYMMDD.lzh -> 競艇番組表
@@ -47,9 +59,11 @@ class Downloader:
         """
 
         lzh_filename = f"{download_type}{date}.lzh"
+        lzh_path = os.path.join(Directory.LZH_DIR, lzh_filename)
 
-        if check_existence and os.path.exists(lzh_filename):
-            print(f"{lzh_filename} すでにダウンロード済みです")
+        if check_existence and os.path.exists(lzh_path):
+            # print(f"{lzh_filename} すでにダウンロード済みです")
+            pass
 
         else:
             year, month, day = date.split(delimiter)
@@ -62,35 +76,36 @@ class Downloader:
             sleep(cls.REQUEST_INTERVAL)
 
             # とりあえず保存しておく。何度もアクセスすると迷惑がかかる
-            with open(lzh_filename, "wb") as f:
+            with open(lzh_path, "wb") as f:
                 f.write(res.content)
 
             print(f"{lzh_filename} を保存しました")
 
         if decompress:
-            return cls.decompress(lzh_filename)
+            return cls.decompress(lzh_path)
         else:
-            return lzh_filename
+            return lzh_path
 
     @classmethod
-    def decompress(cls, lzh_filename: str) -> list[str]:
-        f = lhafile.Lhafile(lzh_filename)
-
+    def decompress(cls, lzh_path: str) -> list[str]:
+        f = lhafile.Lhafile(lzh_path)
+        
         for info in f.infolist():
             filename = info.filename
-            with open(filename, "wb") as tf:
+            with open(os.path.join(Directory.TXT_DIR, filename), "wb") as tf:
                 tf.write(f.read(info.filename))
 
             # print(f"{filename} を保存しました")
 
-        return f.namelist()
+        return [os.path.join(Directory.TXT_DIR, filename) for filename in f.namelist()]
 
 
 class Parser:
     SCHEDULE_HEADER = [RACE_ID, "艇番", PLAYER_ID, "名前", "年齢", "支部", "体重", "階級", "全国勝率", "全国2率",
                        "当地勝率", "当地2率", "モーター2率","ボート2率"]
-    RESULT_HEADER = [RACE_ID, "順位", PLAYER_ID, "展示", "天候", "風向", "風速", "波高", "会場"]
+    RESULT_HEADER = [RACE_ID, "順位", PLAYER_ID, "展示"]
     ODDS_HEADER = [RACE_ID, "単勝", "複勝1", "複勝2", "2連単", "2連複", "拡連複12", "拡連複13", "拡連複23", "3連単", "3連複"]
+    ENV_HEADER = [RACE_ID, "天候", "風向", "風速", "波高", "会場"]
 
     @classmethod
     def parse_result(cls, file, **kwargs):
@@ -103,10 +118,14 @@ class Parser:
     @classmethod
     def parse_odds(cls, file, **kwargs):
         return cls.parse(file, ODDS_PATTERN, header=cls.ODDS_HEADER, odds=True, **kwargs)
+    
+    @classmethod
+    def parse_env(cls, file, **kwargs):
+        return cls.parse(file, ENV_PATTERN, header=cls.ENV_HEADER, env=True, **kwargs)
 
     @classmethod
-    def parse(cls, file, pattern: re.Pattern, header: list = None, save_as_csv: bool = True, odds: bool = False,
-              filename: str = None, date: str = None, db_con=None) -> str or None:
+    def parse(cls, file, pattern: re.Pattern, header: list = None, save_as_csv: bool = True, odds: bool = False, env: bool = False,
+              filename: str = None, date: str = None, con=None, table_name=None) -> str or None:
         """
         save_as_csv: Falseならプレビューだけする
         """
@@ -139,16 +158,8 @@ class Parser:
                 if re.search(r"H\d+m|Ｈ[^ｍ]+ｍ", line):
                     # レースのラウンドを更新。
                     race_num += 1
-                    # 強引だが、天候、風向、風の強さ、波の情報があれば末尾に追加するようにする
-                    if ret := re.search(RACE_ENV_PATTERN, line):
-                        env = list(ret.groups())
-                        # 会場名も末尾に追加する
-                        env.append(race_place)
-                        # print(env)
-                    else:
-                        env = None
 
-                if ret := re.match(pattern, line):
+                if ret := re.search(pattern, line):
                     race_id: str = f"{date}{race_place}{race_name}{race_num}R"
                     row = []
 
@@ -173,13 +184,14 @@ class Parser:
                                 if kind != "複勝1":
                                     line = f.readline()
 
+                    elif env:
+                        row = list(ret.groups())
+                        row.append(race_place)
+                        
                     else:
                         # 間に挟まっている全角スペースを置換するかどうか
                         # line = line.replace("\u3000", "")
                         row = list(ret.groups())
-                        
-                        if env:
-                            row.extend(env)
 
                     # レースIDを先頭に追加
                     row.insert(0, race_id)
@@ -194,7 +206,7 @@ class Parser:
                 if odds:
                     filename = filename.replace("K", "O")
 
-            filename = write_csv(filename, rows, header, db_con)
+            filename = write(filename, rows, header, con, table_name)
     
             if filename:
                 print(f"{filename} を保存しました")
@@ -206,10 +218,10 @@ class Parser:
                 print(row)
 
 
-def write_csv(filename: str, rows: list[list], header: list, db_con=None) -> str or None:
-    if db_con:
+def write(filename: str, rows: list[list], header: list, con=None, table_name=None) -> str or None:
+    if con:
         df = pd.DataFrame(rows, columns=header)
-        df.to_sql("odds", db_con, None, 'append', index=False)
+        df.to_sql(table_name, con, None, 'append', index=False)
         return
 
     # 従っていない場合は以下で対応
@@ -225,94 +237,64 @@ def write_csv(filename: str, rows: list[list], header: list, db_con=None) -> str
 
     return filename
 
-
-def merge(left_file, right_file, filename: str, on=None, db_con=None) -> str or None:
-    # pdでmergeする。
-    if on is None:
-        on = [PLAYER_ID, RACE_ID]
-
-    left = pd.read_csv(left_file)
-    right = pd.read_csv(right_file)
-
-    df = pd.merge(left, right, on=on)
-
-    if db_con:
-        df.to_sql("race", db_con, None, 'append', index=False)
-        return
-
-    df.to_csv(filename, index=False)
-    print(f"{filename} マージしました")
-
-    return filename
-
-
-def make_boatrace_csv(date: str, filename: str = None, with_odds: bool = True, only_result: bool = True, db_con: str=None) -> None:
+def make_boatrace_data(date: str, only_result: bool = True, con: str=None) -> None:
     """
     date format :str -> YYYY-MM-DD
     """
-    os.makedirs(Directory.SAVE_DIR, exist_ok=True)
+    Directory.makedirs()
 
     r_files: list[str] = Downloader.download_result(date, decompress=True)
     s_files: list[str] = Downloader.download_schedule(date, decompress=True)
-
-    r_csv_files = [Parser.parse_result(file, date=date) for file in r_files]
-    s_csv_files = [Parser.parse_schedule(file, date=date) for file in s_files]
-
-    for r_file, s_file in zip(r_csv_files, s_csv_files):
-        merge(r_file, s_file, filename=filename if filename else os.path.join(Directory.SAVE_DIR, f"{date}.csv"), db_con=db_con)
-
-    if with_odds:
-        if not db_con:
-            os.makedirs(Directory.ODDS_DIR, exist_ok=True)
     
-        for r_file in r_files:
-            Parser.parse_odds(r_file, filename=os.path.join(Directory.ODDS_DIR, f"{date}.csv"), date=date, db_con=db_con)
+    for r_file in r_files:
+        Parser.parse_result(r_file, filename=os.path.join(Directory.SAVE_DIR, f"{date}.csv"), date=date, con=con, table_name="result")
+        Parser.parse_env(r_file, filename=os.path.join(Directory.ENV_DIR, f"{date}.csv"), date=date, con=con, table_name="env") 
+        Parser.parse_odds(r_file, filename=os.path.join(Directory.ODDS_DIR, f"{date}.csv"), date=date, con=con, table_name="odds")
+        
+    for s_file in s_files:
+        Parser.parse_schedule(s_file, filename=os.path.join(Directory.SAVE_DIR, f"{date}.csv"), date=date, con=con, table_name="schedule")
+        
+    if con:
+        env = pd.read_sql("SELECT * FROM env", con)
+        result = pd.read_sql("SELECT * FROM result", con)
+        schedule = pd.read_sql("SELECT * FROM schedule", con)
 
-    if only_result:
-        for file in r_files + s_files + r_csv_files + s_csv_files:
-            os.remove(file)
+        race = pd.merge(pd.merge(env, result, on=[RACE_ID]), schedule, on=[RACE_ID, PLAYER_ID])
+        race.to_sql("race", con, None, 'append', index=False)
+            
+    # if only_result:
+    #     for file in r_files + s_files:
+    #         os.remove(file)
 
 
-def make_months_boatrace_csv(year: int, *months, **kwargs) -> None:
+def make_months_boatrace_data(year: int, *months, **kwargs):
     for month in months:
         days: int = calendar.monthrange(year, month)[1]
         for day in range(1, days + 1):
             date: str = f"{year}-{month:02}-{day:02}"
-            make_boatrace_csv(date, **kwargs)
+            make_boatrace_data(date, **kwargs)
 
+def make_years_boartrace_data(*years, **kwargs):
+    for year in years:
+        make_months_boatrace_data(year, *range(1, 12+1), **kwargs)
 
 if __name__ == '__main__':
     # 毎回初期化する。この程度のデータ量ならば、一括削除してしまうのが楽
-    os.remove(DB_NAME)
+    if os.path.exists(DB_NAME):
+        os.remove(DB_NAME)
     # 以下で接続。今回はpandasのto_sqlを使用してデータベースに登録
     con = sqlite3.connect(DB_NAME)
     cur = con.cursor()
     
-    # make_boatrace_csv("2020-08-14", db_con=con)
-    # make_boatrace_csv("2020-09-15", only_result=False)
-    # make_boatrace_csv("2020-09-16", only_result=False)
-    # make_boatrace_csv("2020-09-17", only_result=False)
+    # make_boatrace_data("2020-08-14", con=con)
+    # make_boatrace_data("2020-09-15", only_result=False)
+    # make_boatrace_data("2020-09-16", only_result=False)
+    # make_boatrace_data("2020-09-17", only_result=False)
     # parse_odds("K200906.TXT")
-    # make_months_boatrace_csv(2020, 8)
-    make_months_boatrace_csv(2020, 1,2,3,4,5,6,7,8,9,10,11,12, db_con=con)
+    make_months_boatrace_data(2020, 8, con=con)
+    # make_months_boatrace_data(2020, 1,2,3,4,5,6,7,8,9,10,11,12, con=con)
+    # make_years_boartrace_data(2020, 2021, con=con)
     
-    # for row in cur.execute("SELECT * FROM race"):
-    #     print(row)
-        
-    # for row in cur.execute("SELECT * FROM odds"):
-    #     print(row)
-
-    # a = pd.read_sql("SELECT * FROM race WHERE レースID LIKE '2020-09-28%'", con)
-    # a = pd.read_sql("SELECT * FROM odds WHERE レースID LIKE '2020-09-29%'", 
-    # con)
-    # a = pd.read_sql("""SELECT * FROM odds
-    #                 WHERE 
-    #                 レースID LIKE '2020-09-28%' OR
-    #                 レースID LIKE '2020-09-29%' OR
-    #                 レースID LIKE '2020-09-30%'
-    #                 """, con)
-    # print(a)
-
     con.commit()
     con.close()
 
